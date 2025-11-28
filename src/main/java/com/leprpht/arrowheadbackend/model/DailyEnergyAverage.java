@@ -15,4 +15,5 @@ import java.util.List;
 public class DailyEnergyAverage {
     private LocalDate date;
     private List<EnergyMix> averages;
+    private double totalCleanPerc;
 }

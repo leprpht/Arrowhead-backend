@@ -79,7 +79,11 @@ public class ArrowheadService {
                             .build())
                     .sorted(Comparator.comparing(EnergyMix::getFuel))
                     .toList();
-            results.add(new DailyEnergyAverage(date, averages));
+            double totalCleanPerc = averages.stream()
+                    .filter(mix -> CLEAN_FUELS.contains(mix.getFuel()))
+                    .mapToDouble(EnergyMix::getPerc)
+                    .sum();
+            results.add(new DailyEnergyAverage(date, averages, totalCleanPerc));
         }
 
         return results;

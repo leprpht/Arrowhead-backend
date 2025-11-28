@@ -1,9 +1,6 @@
 package com.leprpht.arrowheadbackend.service;
 
-import com.leprpht.arrowheadbackend.model.DailyEnergyAverage;
-import com.leprpht.arrowheadbackend.model.EnergyApiResponse;
-import com.leprpht.arrowheadbackend.model.EnergyMix;
-import com.leprpht.arrowheadbackend.model.EnergyMixPeriod;
+import com.leprpht.arrowheadbackend.model.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -22,9 +19,10 @@ public class ArrowheadService {
     private final WebClient webClient;
     private final String baseUrl;
 
-    public ArrowheadService(
-            WebClient.Builder webClientBuilder,
-            @Value("${MIX_API_URL}") String baseUrl) {
+    private static final Set<String> CLEAN_FUELS = Set.of("biomass", "nuclear", "hydro", "wind", "solar");
+
+    public ArrowheadService(WebClient.Builder webClientBuilder,
+                            @Value("${MIX_API_URL}") String baseUrl) {
         this.webClient = webClientBuilder.build();
         this.baseUrl = baseUrl;
     }
@@ -40,28 +38,23 @@ public class ArrowheadService {
                 .uri(url)
                 .retrieve()
                 .bodyToMono(EnergyApiResponse.class)
-                .map(response -> (response == null || response.getData() == null)
-                        ? Collections.<EnergyMixPeriod>emptyList()
-                        : response.getData())
+                .map(response -> Optional.ofNullable(response)
+                        .map(EnergyApiResponse::getData)
+                        .orElse(Collections.emptyList()))
                 .timeout(Duration.ofSeconds(10))
                 .onErrorReturn(Collections.emptyList());
     }
 
     private Mono<List<DailyEnergyAverage>> fetchDailyAverages(Instant from, Instant to) {
-        String fromStr = from.toString();
-        String toStr = to.toString();
-
-        return fetchEnergyData(fromStr, toStr)
+        return fetchEnergyData(from.toString(), to.toString())
                 .map(this::groupPeriodsByUtcDay)
                 .onErrorReturn(Collections.emptyList());
     }
 
     private List<DailyEnergyAverage> groupPeriodsByUtcDay(List<EnergyMixPeriod> periods) {
-        if (periods == null || periods.isEmpty()) {
-            return Collections.emptyList();
-        }
+        if (periods == null || periods.isEmpty()) return Collections.emptyList();
 
-        Map<LocalDate, Map<String, DoubleSummaryStatistics>> accumulator = new TreeMap<>();
+        Map<LocalDate, Map<String, DoubleSummaryStatistics>> dailyStats = new TreeMap<>();
 
         for (EnergyMixPeriod period : periods) {
             if (period == null || period.getFrom() == null || period.getGenerationMix() == null) continue;
@@ -70,29 +63,77 @@ public class ArrowheadService {
 
             for (EnergyMix mix : period.getGenerationMix()) {
                 if (mix == null || mix.getFuel() == null) continue;
-
-                accumulator.computeIfAbsent(dateUtc, d -> new HashMap<>())
+                dailyStats.computeIfAbsent(dateUtc, d -> new HashMap<>())
                         .computeIfAbsent(mix.getFuel(), f -> new DoubleSummaryStatistics())
                         .accept(mix.getPerc());
             }
         }
 
-        List<DailyEnergyAverage> results = new ArrayList<>(accumulator.size());
-        for (Map.Entry<LocalDate, Map<String, DoubleSummaryStatistics>> entry : accumulator.entrySet()) {
+        List<DailyEnergyAverage> results = new ArrayList<>(dailyStats.size());
+        for (Map.Entry<LocalDate, Map<String, DoubleSummaryStatistics>> entry : dailyStats.entrySet()) {
             LocalDate date = entry.getKey();
-            Map<String, DoubleSummaryStatistics> fuelStats = entry.getValue();
-
-            List<EnergyMix> averages = fuelStats.entrySet().stream()
+            List<EnergyMix> averages = entry.getValue().entrySet().stream()
                     .map(e -> EnergyMix.builder()
                             .fuel(e.getKey())
                             .perc(e.getValue().getAverage())
                             .build())
                     .sorted(Comparator.comparing(EnergyMix::getFuel))
                     .toList();
-
             results.add(new DailyEnergyAverage(date, averages));
         }
 
         return results;
+    }
+
+    private CompletableFuture<List<EnergyMixPeriod>> fetchEnergyDataAsync(String from, String to) {
+        return fetchEnergyData(from, to).toFuture();
+    }
+
+    public CompletableFuture<ChargingTime> getOptimalChargingTime(int hours, Instant from, Instant to) {
+        if (hours < 1 || hours > 6) throw new IllegalArgumentException();
+
+        return fetchEnergyDataAsync(from.toString(), to.toString())
+                .thenApplyAsync(periods -> findOptimalChargingTime(hours, from, to, periods));
+    }
+
+    private ChargingTime findOptimalChargingTime(int hours, Instant from, Instant to, List<EnergyMixPeriod> periods) {
+        Instant timeBracket = from.plusSeconds(hours * 3600L);
+
+        ChargingTime best = ChargingTime.builder()
+                .from(from)
+                .to(from.plusSeconds(hours * 3600L))
+                .perc(0.0)
+                .build();
+
+        while (timeBracket.isBefore(to)) {
+            double cleanPerc = calculateCleanPercentage(hours, timeBracket, periods);
+            if (cleanPerc > best.getPerc()) {
+                Instant bracketStart = timeBracket.minusSeconds(hours * 3600L);
+                best.setFrom(bracketStart);
+                best.setTo(timeBracket);
+                best.setPerc(cleanPerc);
+            }
+            timeBracket = timeBracket.plusSeconds(30 * 60);
+        }
+
+        return best;
+    }
+
+    private double calculateCleanPercentage(int hours, Instant timeBracket, List<EnergyMixPeriod> periods) {
+        Instant bracketStart = timeBracket.minusSeconds(hours * 3600L);
+        double cleanPerc = 0.0;
+
+        for (EnergyMixPeriod period : periods) {
+            if (period.getFrom().isBefore(bracketStart) || period.getTo().isAfter(timeBracket))
+                continue;
+
+            for (EnergyMix mix : period.getGenerationMix()) {
+                if (mix != null && mix.getFuel() != null && CLEAN_FUELS.contains(mix.getFuel())) {
+                    cleanPerc += mix.getPerc();
+                }
+            }
+        }
+
+        return cleanPerc / (hours * 2);
     }
 }

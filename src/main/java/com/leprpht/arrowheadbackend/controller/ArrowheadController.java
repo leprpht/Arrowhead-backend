@@ -7,10 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -51,9 +48,11 @@ public class ArrowheadController {
     }
 
     private InstantRange getNextTwoDaysRange() {
-        LocalDate todayUtc = LocalDate.now(Clock.systemUTC());
-        Instant from = todayUtc.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-        Instant to = todayUtc.plusDays(2).atTime(23, 30).toInstant(ZoneOffset.UTC);
+        ZoneId zone = ZoneId.of("Europe/Warsaw");
+        LocalDate todayLocal = LocalDate.now(zone);
+
+        Instant from = todayLocal.plusDays(1).atStartOfDay(zone).toInstant();
+        Instant to = todayLocal.plusDays(2).atTime(23, 30).atZone(zone).toInstant();
         return new InstantRange(from, to);
     }
 }

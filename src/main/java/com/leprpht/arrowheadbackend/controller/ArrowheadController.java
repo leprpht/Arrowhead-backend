@@ -32,7 +32,7 @@ public class ArrowheadController {
 
     @GetMapping("/chargingTime")
     public CompletableFuture<ResponseEntity<ChargingTime>> getOptimalChargingTime(@RequestParam int hours) {
-        InstantRange range = getNextTwoDaysRange();
+        InstantRange range = getNextTwoDaysRangeFromNow();
         CompletableFuture<ChargingTime> future =
                 arrowheadService.getOptimalChargingTime(hours, range.from(), range.to());
         return future
@@ -52,6 +52,15 @@ public class ArrowheadController {
         LocalDate todayUTC = LocalDate.now(utc);
 
         Instant from = todayUTC.atStartOfDay(utc).plusHours(1).toInstant();
+        Instant to = todayUTC.plusDays(2).atTime(23, 30).atZone(utc).toInstant();
+        return new InstantRange(from, to);
+    }
+
+    private InstantRange getNextTwoDaysRangeFromNow() {
+        ZoneId utc = ZoneId.of("UTC");
+        LocalDate todayUTC = LocalDate.now(utc);
+
+        Instant from = todayUTC.atStartOfDay(utc).plusHours(Instant.now().atZone(utc).plusHours(1).getHour()).toInstant();
         Instant to = todayUTC.plusDays(2).atTime(23, 30).atZone(utc).toInstant();
         return new InstantRange(from, to);
     }

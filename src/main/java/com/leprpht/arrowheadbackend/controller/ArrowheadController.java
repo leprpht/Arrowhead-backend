@@ -48,11 +48,11 @@ public class ArrowheadController {
     }
 
     private InstantRange getNextTwoDaysRange() {
-        ZoneId zone = ZoneId.of("Europe/Warsaw");
-        LocalDate todayLocal = LocalDate.now(zone);
+        ZoneId utc = ZoneId.of("UTC");
+        LocalDate todayUTC = LocalDate.now(utc);
 
-        Instant from = todayLocal.plusDays(1).atStartOfDay(zone).toInstant();
-        Instant to = todayLocal.plusDays(2).atTime(23, 30).atZone(zone).toInstant();
+        Instant from = todayUTC.atStartOfDay(utc).toInstant();
+        Instant to = todayUTC.plusDays(2).atTime(23, 30).atZone(utc).toInstant();
         return new InstantRange(from, to);
     }
 }

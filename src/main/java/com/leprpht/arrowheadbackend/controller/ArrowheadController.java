@@ -51,7 +51,7 @@ public class ArrowheadController {
         ZoneId utc = ZoneId.of("UTC");
         LocalDate todayUTC = LocalDate.now(utc);
 
-        Instant from = todayUTC.atStartOfDay(utc).toInstant();
+        Instant from = todayUTC.atStartOfDay(utc).plusHours(1).toInstant();
         Instant to = todayUTC.plusDays(2).atTime(23, 30).atZone(utc).toInstant();
         return new InstantRange(from, to);
     }
